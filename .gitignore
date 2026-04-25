@@ -1,0 +1,18 @@
+# Environment Variables (Security)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Local Database
+*.sqlite3
+*.db
+
+# IDEs
+.vscode/
+.idea/
