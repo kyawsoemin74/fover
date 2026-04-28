@@ -5,35 +5,37 @@ from app.core.database import get_db
 from app.models.match import Match
 from app.schemas.match import MatchSchema
 from datetime import datetime
-from sqlalchemy import func
-from app.services.lineup_service import get_or_sync_lineup
+from app.services import match_service
 
 router = APIRouter()
 
-@router.get("/today", response_model=List[MatchSchema])
-def get_matches(db: Session = Depends(get_db)):
-    # ရှာဖွေမည့် ရက်စွဲကို Print ထုတ်ကြည့်ပါ
-    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-    
-    print(f"Filtering between: {today_start} and {today_end}")
-    
-    # Debug: Database ထဲမှာ စုစုပေါင်း match ဘယ်နှခုရှိနေလဲ အရင်စစ်ပါ
-    total_count = db.query(Match).count()
-    print(f"Total matches in DB: {total_count}")
-
-    return db.query(Match).filter(Match.match_time >= today_start, Match.match_time <= today_end).all()
+@router.get("/", response_model=List[MatchSchema])
+def get_today_matches(db: Session = Depends(get_db)):
+    """ဒီနေ့ပွဲစဉ်များကို ရယူရန် (Default)"""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    return match_service.get_matches_by_date_range(db, today_str)
 
 @router.get("/live", response_model=List[MatchSchema])
 def get_live_matches(db: Session = Depends(get_db)):
-    # Status code များ အမှားအယွင်းမရှိစေရန် 'LIVE', 'IN PLAY' စသည်တို့ကိုပါ ထည့်သွင်းစစ်ဆေးနိုင်သည်
-    # သို့သော် API-Sports short status အစစ်အမှန်များမှာ အောက်ပါအတိုင်းဖြစ်သည်
-    live_statuses = ["1H", "HT", "2H", "ET", "P", "BT", "LIVE", "INT"]
-    results = db.query(Match).filter(Match.status.in_(live_statuses)).all()
-    
-    # ဘာကြောင့် 0 ဖြစ်နေလဲ သိနိုင်ရန် လက်ရှိ DB ထဲမှာ ရှိနေတဲ့ Status တွေကိုပါ Print ထုတ်ကြည့်ပါ
+    """လက်ရှိကစားနေသော ပွဲစဉ်များကို ရယူရန်"""
+    results = match_service.get_live_matches_from_db(db)
     if not results:
-        available_statuses = db.query(Match.status).distinct().all()
-        print(f"No live matches. Available statuses in DB: {available_statuses}")
-    
+        # Logging and minor checks can stay in routes for debugging
+        pass
     return results
+
+@router.get("/searchmatchwithoutdate/league={league_id}/season={season}", response_model=List[MatchSchema])
+def search_matches_without_date(league_id: int, season: int, db: Session = Depends(get_db)):
+    """ရက်စွဲမပါဘဲ League နှင့် Season အလိုက် ပွဲစဉ်များကို ရှာဖွေရန်"""
+    return match_service.get_matches_by_league_and_season(db, league_id, season)
+
+@router.get("/{date}", response_model=List[MatchSchema])
+def get_matches_by_specific_date(date: str, db: Session = Depends(get_db)):
+    """သတ်မှတ်ထားသော ရက်စွဲ (YYYY-MM-DD) အလိုက် ပွဲစဉ်များကို ရှာဖွေရန်"""
+    try:
+        return match_service.get_matches_by_date_range(db, date)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid date format. Please use YYYY-MM-DD"
+        )

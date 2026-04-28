@@ -1,6 +1,10 @@
+import logging
 from app.models.match import Match
-from datetime import datetime
+from datetime import datetime, time
+from typing import List
+from sqlalchemy.orm import Session
 
+logger = logging.getLogger(__name__)
 
 def map_match_data(item: dict) -> dict:
     """API response item ကို database field mapping ပြောင်းပေးသော helper function"""
@@ -31,11 +35,11 @@ def map_match_data(item: dict) -> dict:
 def save_matches(db, data):
     fixtures = data.get("response", [])
     if not fixtures:
-        print("No fixtures found in the API response.")
+        logger.warning("No fixtures found in the API response.")
         return
     
     incoming_match_ids = [item["fixture"]["id"] for item in fixtures]
-    print(f"Syncing {len(incoming_match_ids)} matches with database...")
+    logger.info(f"Syncing {len(incoming_match_ids)} matches with database...")
 
     # Database ထဲမှာ ရှိနှင့်ပြီးသား Match တွေကို တစ်ခါတည်း ဆွဲထုတ်ခြင်း (N+1 Query problem ကို ရှောင်ရန်)
     existing_matches = db.query(Match).filter(Match.match_id.in_(incoming_match_ids)).all()
@@ -67,7 +71,34 @@ def save_matches(db, data):
         
     try:
         db.commit()
-        print(f"Successfully synced: Added {len(new_matches_to_add)}, Updated {updated_count}")
+        logger.info(f"Successfully synced: Added {len(new_matches_to_add)}, Updated {updated_count}")
     except Exception as e:
         db.rollback()
-        print(f"Database error during commit: {e}")
+        logger.error(f"Database error during commit: {e}")
+
+def get_matches_by_date_range(db: Session, date_str: str) -> List[Match]:
+    """ရက်စွဲအလိုက် ပွဲစဉ်များကို ရှာဖွေပေးသော Service (DRY point)"""
+    target_date = datetime.strptime(date_str, "%Y-%m-%d")
+    start_of_day = datetime.combine(target_date, time.min)
+    end_of_day = datetime.combine(target_date, time.max)
+    
+    return db.query(Match).filter(
+        Match.match_time >= start_of_day, 
+        Match.match_time <= end_of_day
+    ).all()
+
+def get_live_matches_from_db(db: Session) -> List[Match]:
+    """လက်ရှိ Live ဖြစ်နေသော ပွဲစဉ်များကို ရှာဖွေပေးသော Service"""
+    live_statuses = ["1H", "HT", "2H", "ET", "P", "BT", "LIVE", "INT"]
+    return db.query(Match).filter(Match.status.in_(live_statuses)).all()
+
+def get_matches_by_league_and_season(db: Session, league_id: int, season: int) -> List[Match]:
+    """League ID နှင့် Season အလိုက် ပွဲစဉ်များကို ရှာဖွေပေးသော Service"""
+    year_start = datetime(season, 1, 1, 0, 0, 0)
+    year_end = datetime(season, 12, 31, 23, 59, 59)
+    
+    return db.query(Match).filter(
+        Match.league_id == league_id,
+        Match.match_time >= year_start,
+        Match.match_time <= year_end
+    ).all()
